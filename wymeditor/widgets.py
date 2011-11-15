@@ -16,7 +16,6 @@ class WYMEditorArea(forms.Textarea):
             )
         }
         js = (
-            'http://ajax.googleapis.com/ajax/libs/jquery/1.5/jquery.min.js',
             '%swymeditor/jquery.wymeditor.js' % settings.STATIC_URL,
             '%sjs/load_wymeditor.js' % settings.STATIC_URL,
         )
