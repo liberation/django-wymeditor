@@ -3,7 +3,7 @@
     WYMeditor
     =========
 
-    version 1.0.0a6
+    version 1.0.0b1
 
     WYMeditor : what you see is What You Mean web-based editor
 
@@ -143,7 +143,7 @@ jQuery.extend(WYMeditor, {
 
 */
 
-    VERSION             : "1.0.0a6",
+    VERSION             : "1.0.0b1",
     INSTANCES           : [],
     STRINGS             : [],
     SKINS               : [],
@@ -964,17 +964,19 @@ jQuery.fn.isPhantomNode = function () {
 };
 
 /**
-    jQuery.fn.nextAllContents
-    ======================
+    jQuery.fn.nextContentsUntil
+    ===========================
 
-    Acts like jQuery.nextAll() but includes text nodes and comments and only
+    Acts like jQuery.nextUntil() but includes text nodes and comments and only
     works on the first element in the given jQuery collection..
-
-    Mostly cribbed from the jQuery source.
 */
-jQuery.fn.nextAllContents = function () {
+jQuery.fn.nextContentsUntil = function (selector, filter) {
     var matched = [],
+        $matched,
         cur = this.get(0);
+
+    selector = selector ? selector : '';
+    filter = filter ? filter : '';
 
     if (!cur) {
         // Called on an empty selector. The sibling of nothing is nothing
@@ -984,13 +986,83 @@ jQuery.fn.nextAllContents = function () {
     cur = cur.nextSibling;
 
     while (cur) {
-        matched.push(cur);
-        cur = cur.nextSibling;
+        if (!$(cur).is(selector)) {
+            matched.push(cur);
+            cur = cur.nextSibling;
+        } else {
+            break;
+        }
     }
 
-    return $(matched);
+    $matched = $(matched);
+    if (filter) {
+        return $matched.filter(filter);
+    }
+    return $matched;
+};
+/**
+    jQuery.fn.nextAllContents
+    =========================
+
+    Acts like jQuery.nextAll() but includes text nodes and comments and only
+    works on the first element in the given jQuery collection..
+
+    Mostly cribbed from the jQuery source.
+*/
+jQuery.fn.nextAllContents = function () {
+    return $(this).nextContentsUntil('', '');
 };
 
+/**
+    jQuery.fn.prevContentsUntil
+    ===========================
+
+    Acts like jQuery.prevUntil() but includes text nodes and comments and only
+    works on the first element in the given jQuery collection..
+*/
+jQuery.fn.prevContentsUntil = function (selector, filter) {
+    var matched = [],
+        $matched,
+        cur = this.get(0);
+
+    selector = selector ? selector : '';
+    filter = filter ? filter : '';
+
+    if (!cur) {
+        // Called on an empty selector. The sibling of nothing is nothing
+        return $();
+    }
+    // We don't want to include this element, only its siblings
+    cur = cur.previousSibling;
+
+    while (cur) {
+        if (!$(cur).is(selector)) {
+            matched.push(cur);
+            cur = cur.previousSibling;
+        } else {
+            break;
+        }
+    }
+
+    $matched = $(matched);
+    if (filter) {
+        return $matched.filter(filter);
+    }
+    return $matched;
+};
+
+/**
+    jQuery.fn.prevAllContents
+    =========================
+
+    Acts like jQuery.prevAll() but includes text nodes and comments and only
+    works on the first element in the given jQuery collection..
+
+    Mostly cribbed from the jQuery source.
+*/
+jQuery.fn.prevAllContents = function () {
+    return $(this).prevContentsUntil('', '');
+};
 
 WYMeditor.isPhantomNode = function (n) {
     if (n.nodeType === 3) {
@@ -5997,9 +6069,9 @@ WYMeditor.editor.prototype._outdentSingleItem = function (listItem) {
         // If our last content and the first content in the subsequent content
         // are both text nodes, insert a <br /> spacer to avoid crunching the
         // text together visually. This maintains the same "visual" structure.
-        if ($liToOutdent.contents().length > 0
-                && $liToOutdent.contents().last()[0].nodeType === WYMeditor.NODE.TEXT
-                && $subsequentParentListSiblingContent[0].nodeType === WYMeditor.NODE.TEXT) {
+        if ($liToOutdent.contents().length > 0 &&
+                $liToOutdent.contents().last()[0].nodeType === WYMeditor.NODE.TEXT &&
+                $subsequentParentListSiblingContent[0].nodeType === WYMeditor.NODE.TEXT) {
             $liToOutdent.append('<br />');
         }
 
@@ -6026,14 +6098,23 @@ WYMeditor.editor.prototype._outdentSingleItem = function (listItem) {
     Corrected lists have the following properties:
     1. ol and ul nodes *only* allow li children.
     2. All li nodes have either an ol or ul parent.
+
+    The `alreadyCorrected` argument is used to indicate if a correction has
+    already been made, which means we need to return true even if no further
+    corrections are made.
+
+    Returns true if any nodes were corrected.
  */
-WYMeditor.editor.prototype.correctInvalidListNesting = function (listItem) {
+WYMeditor.editor.prototype.correctInvalidListNesting = function (listItem, alreadyCorrected) {
     // Travel up the dom until we're at the root ol/ul/li
     var currentNode = listItem,
         parentNode,
         tagName;
+    if (typeof alreadyCorrected === 'undefined') {
+        alreadyCorrected = false;
+    }
     if (!currentNode) {
-        return;
+        return alreadyCorrected;
     }
     while (currentNode.parentNode) {
         parentNode = currentNode.parentNode;
@@ -6050,11 +6131,57 @@ WYMeditor.editor.prototype.correctInvalidListNesting = function (listItem) {
         // We're still traversing up a list structure. Keep going
         currentNode = parentNode;
     }
+    // We have the root node. Make sure it's legit
+    if ($(currentNode).is('li')) {
+        // We have an li as the "root" because its missing a parent list.
+        // Correct this problem and then try again to correct the nesting.
+        WYMeditor.console.log("Correcting orphaned root li before correcting invalid list nesting.");
+        this._correctOrphanedListItem(currentNode);
+        return this.correctInvalidListNesting(currentNode, true);
+    }
     if (!$(currentNode).is('ol,ul')) {
         WYMeditor.console.error("Can't correct invalid list nesting. No root list found");
-        return;
+        return alreadyCorrected;
     }
-    return this._correctInvalidListNesting(currentNode);
+    return this._correctInvalidListNesting(currentNode, alreadyCorrected);
+};
+/**
+    editor._correctOrphanedListItem
+    ===============================
+
+    Ensure that the given ophaned list item has a proper list parent.
+
+    Uses the sibling nodes to determine what kind of list should be used. Also
+    wraps sibling adjacent orphaned li nodes in the same list.
+ */
+WYMeditor.editor.prototype._correctOrphanedListItem = function (listNode) {
+    var prevAdjacentLis,
+        nextAdjacentLis,
+        $adjacentLis = $(),
+        prevList,
+        prevNode;
+
+    prevAdjacentLis = $(listNode).prevContentsUntil(':not(li)');
+    nextAdjacentLis = $(listNode).nextContentsUntil(':not(li)');
+
+    // Merge the collections together
+    $adjacentLis = $adjacentLis.add(prevAdjacentLis);
+    $adjacentLis = $adjacentLis.add(listNode);
+    $adjacentLis = $adjacentLis.add(nextAdjacentLis);
+
+    // Determine if we have a list node in which to insert all of our orphaned
+    // li's
+    prevNode = $adjacentLis[0].previousSibling;
+    if (prevNode && $(prevNode).is('ol,ul')) {
+        prevList = prevNode;
+    } else {
+        // No previous existing list to use. Need to create one
+        $adjacentLis.before('<ol></ol>');
+        prevList = $adjacentLis.prev()[0];
+    }
+
+    // Insert all of the adjacent orphaned lists inside the new parent
+    $(prevList).append($adjacentLis);
 };
 
 /**
@@ -6065,6 +6192,8 @@ WYMeditor.editor.prototype.correctInvalidListNesting = function (listItem) {
     correctInvalidListNesting is just a helper function that first finds the root
     of the list.
 
+    Returns true if any correction was made.
+
     We use a reverse preorder traversal to navigate the DOM because we might be:
 
     * Making nodes children of their previous sibling (in the <ol><li></li><ol>...</ol></ol> case)
@@ -6073,9 +6202,10 @@ WYMeditor.editor.prototype.correctInvalidListNesting = function (listItem) {
     Adapted from code at: Tavs Dokkedahl from
     http://www.jslab.dk/articles/non.recursive.preorder.traversal.part3
  */
-WYMeditor.editor.prototype._correctInvalidListNesting = function (listNode) {
+WYMeditor.editor.prototype._correctInvalidListNesting = function (listNode, alreadyCorrected) {
     var rootNode = listNode,
         currentNode = listNode,
+        wasCorrected = false,
         previousSibling,
         previousLi,
         $currentNode,
@@ -6085,6 +6215,9 @@ WYMeditor.editor.prototype._correctInvalidListNesting = function (listNode) {
         targetLi,
         lastContentNode,
         spacerHtml = '<li class="spacer_li"></li>';
+    if (typeof alreadyCorrected !== 'undefined') {
+        wasCorrected = alreadyCorrected;
+    }
 
     while (currentNode) {
         if (currentNode._wym_visited) {
@@ -6145,6 +6278,7 @@ WYMeditor.editor.prototype._correctInvalidListNesting = function (listNode) {
                         // 3. Move all of the content to the previous li or the
                         // subsequent li (in that priority).
                         WYMeditor.console.log("Fixing orphaned list content");
+                        wasCorrected = true;
 
                         // Gather this and previous sibling until the previous li
                         nodesToMove = [currentNode];
@@ -6185,8 +6319,7 @@ WYMeditor.editor.prototype._correctInvalidListNesting = function (listNode) {
                         // with a <br /> to preserve the visual layout of them
                         // being on separate lines
                         lastContentNode = $(targetLi).contents().last();
-                        if (lastContentNode.length === 1
-                                && lastContentNode[0].nodeType === WYMeditor.NODE.TEXT) {
+                        if (lastContentNode.length === 1 && lastContentNode[0].nodeType === WYMeditor.NODE.TEXT) {
                             if (nodesToMove[0].nodeType === WYMeditor.NODE.TEXT) {
                                 $(targetLi).append('<br />');
                             }
@@ -6213,6 +6346,7 @@ WYMeditor.editor.prototype._correctInvalidListNesting = function (listNode) {
         }
     }
 
+    return wasCorrected;
 };
 
 /**
@@ -6358,8 +6492,8 @@ WYMeditor.editor.prototype._getSelectedListItems = function (sel) {
 
     // Filter out the non-li nodes
     for (i = 0; i < nodes.length; i++) {
-        if (nodes[i].nodeType === WYMeditor.NODE.ELEMENT
-                && nodes[i].tagName.toLowerCase() === WYMeditor.LI) {
+        if (nodes[i].nodeType === WYMeditor.NODE.ELEMENT &&
+                nodes[i].tagName.toLowerCase() === WYMeditor.LI) {
             liNodes.push(nodes[i]);
         }
     }
@@ -6390,10 +6524,18 @@ WYMeditor.editor.prototype.indent = function () {
                 selectedBlock,
                 ['ol', 'ul', 'li']
             );
-        wym.correctInvalidListNesting(potentialListBlock);
-        return true;
+        return wym.correctInvalidListNesting(potentialListBlock);
     };
-    wym.restoreSelectionAfterManipulation(manipulationFunc);
+    if (wym.restoreSelectionAfterManipulation(manipulationFunc)) {
+        // We actually made some list correction
+        // Don't actually perform the action if we've potentially just changed
+        // the list, and maybe the list appearance as a result.
+        return true;
+    }
+
+    // We just changed and restored the selection when possibly correcting the
+    // lists
+    sel = rangy.getIframeSelection(this._iframe);
 
     // Gather the li nodes the user means to affect based on their current
     // selection
@@ -6418,7 +6560,7 @@ WYMeditor.editor.prototype.indent = function () {
         }
         return domChanged;
     };
-    wym.restoreSelectionAfterManipulation(manipulationFunc);
+    return wym.restoreSelectionAfterManipulation(manipulationFunc);
 };
 
 /**
@@ -6442,10 +6584,18 @@ WYMeditor.editor.prototype.outdent = function () {
                 selectedBlock,
                 ['ol', 'ul', 'li']
             );
-        wym.correctInvalidListNesting(potentialListBlock);
-        return true;
+        return wym.correctInvalidListNesting(potentialListBlock);
     };
-    wym.restoreSelectionAfterManipulation(manipulationFunc);
+    if (wym.restoreSelectionAfterManipulation(manipulationFunc)) {
+        // We actually made some list correction
+        // Don't actually perform the action if we've potentially just changed
+        // the list, and maybe the list appearance as a result.
+        return true;
+    }
+
+    // We just changed and restored the selection when possibly correcting the
+    // lists
+    sel = rangy.getIframeSelection(this._iframe);
 
     // Gather the li nodes the user means to affect based on their current
     // selection
@@ -6470,7 +6620,7 @@ WYMeditor.editor.prototype.outdent = function () {
         }
         return domChanged;
     };
-    wym.restoreSelectionAfterManipulation(manipulationFunc);
+    return wym.restoreSelectionAfterManipulation(manipulationFunc);
 };
 
 /**
@@ -6488,12 +6638,14 @@ WYMeditor.editor.prototype.outdent = function () {
 */
 WYMeditor.editor.prototype.restoreSelectionAfterManipulation = function (manipulationFunc) {
     var sel = rangy.getIframeSelection(this._iframe),
-        savedSelection = rangy.saveSelection(rangy.dom.getIframeWindow(this._iframe));
+        savedSelection = rangy.saveSelection(rangy.dom.getIframeWindow(this._iframe)),
+        changesMade = true;
 
     // If something goes wrong, we don't want to leave selection markers
     // floating around
     try {
-        if (manipulationFunc()) {
+        changesMade = manipulationFunc();
+        if (changesMade) {
             rangy.restoreSelection(savedSelection);
         } else {
             rangy.removeMarkers(savedSelection);
@@ -6503,6 +6655,8 @@ WYMeditor.editor.prototype.restoreSelectionAfterManipulation = function (manipul
         WYMeditor.console.error(e);
         rangy.removeMarkers(savedSelection);
     }
+
+    return changesMade;
 };
 
 /**
@@ -6522,11 +6676,28 @@ WYMeditor.editor.prototype.insertOrderedlist = function () {
     var wym = this,
         manipulationFunc;
 
+    // First, make sure this list is properly structured
+    manipulationFunc = function () {
+        var selectedBlock = wym.selected(),
+            potentialListBlock = wym.findUp(
+                selectedBlock,
+                ['ol', 'ul', 'li']
+            );
+        return wym.correctInvalidListNesting(potentialListBlock);
+    };
+    if (wym.restoreSelectionAfterManipulation(manipulationFunc)) {
+        // We actually made some list correction
+        // Don't actually perform the action if we've potentially just changed
+        // the list, and maybe the list appearance as a result.
+        return true;
+    }
+
+    // Actually perform the list insertion
     manipulationFunc = function () {
         return wym._insertList('ol');
     };
 
-    wym.restoreSelectionAfterManipulation(manipulationFunc);
+    return wym.restoreSelectionAfterManipulation(manipulationFunc);
 };
 
 /**
@@ -6544,11 +6715,28 @@ WYMeditor.editor.prototype.insertUnorderedlist = function () {
     var wym = this,
         manipulationFunc;
 
+    // First, make sure this list is properly structured
+    manipulationFunc = function () {
+        var selectedBlock = wym.selected(),
+            potentialListBlock = wym.findUp(
+                selectedBlock,
+                ['ol', 'ul', 'li']
+            );
+        return wym.correctInvalidListNesting(potentialListBlock);
+    };
+    if (wym.restoreSelectionAfterManipulation(manipulationFunc)) {
+        // We actually made some list correction
+        // Don't actually perform the action if we've potentially just changed
+        // the list, and maybe the list appearance as a result.
+        return true;
+    }
+
+    // Actually perform the list insertion
     manipulationFunc = function () {
         return wym._insertList('ul');
     };
 
-    wym.restoreSelectionAfterManipulation(manipulationFunc);
+    return wym.restoreSelectionAfterManipulation(manipulationFunc);
 };
 
 /**
@@ -6973,15 +7161,6 @@ WYMeditor.WymClassExplorer.prototype._exec = function (cmd, param) {
         this._doc.execCommand(cmd, false, param);
     } else {
         this._doc.execCommand(cmd);
-    }
-};
-
-WYMeditor.WymClassExplorer.prototype.selected = function () {
-    var caretPos = this._iframe.contentWindow.document.caretPos;
-    if (caretPos) {
-        if (caretPos.parentElement) {
-            return caretPos.parentElement();
-        }
     }
 };
 
@@ -9504,6 +9683,9 @@ WYMeditor.XhtmlSaxListener = function() {
     this.validator = WYMeditor.XhtmlValidator;
     this._tag_stack = [];
     this.avoided_tags = [];
+    this._insert_before_closing = [];
+    this._insert_after_closing = [];
+    this._last_node_was_text = false;
 
     this.entities = {
         '&nbsp;':'&#160;','&iexcl;':'&#161;','&cent;':'&#162;',
@@ -9593,7 +9775,7 @@ WYMeditor.XhtmlSaxListener = function() {
     this.block_tags = [
         "a", "abbr", "acronym", "address", "area", "b",
         "base", "bdo", "big", "blockquote", "body", "button",
-        "caption", "cite", "code", "col", "colgroup", "dd", "del", "div",
+        "caption", "cite", "code", "colgroup", "dd", "del", "div",
         "dfn", "dl", "dt", "em", "fieldset", "form", "head", "h1", "h2",
         "h3", "h4", "h5", "h6", "html", "i", "ins",
         "kbd", "label", "legend", "li", "map", "noscript",
@@ -9603,7 +9785,7 @@ WYMeditor.XhtmlSaxListener = function() {
         "thead", "title", "tr", "tt", "ul", "var", "extends"];
 
 
-    this.inline_tags = ["br", "hr", "img", "input"];
+    this.inline_tags = ["br", "col", "hr", "img", "input"];
 
     return this;
 };
@@ -9624,6 +9806,15 @@ WYMeditor.XhtmlSaxListener.prototype.shouldCloseTagAutomatically = function(tag,
 
 WYMeditor.XhtmlSaxListener.prototype.beforeParsing = function(raw) {
     this.output = '';
+
+    // Reset attributes that might bleed over between parsing
+    this._insert_before_closing = [];
+    this._insert_after_closing = [];
+    this._open_tags = {};
+    this._tag_stack = [];
+    this._last_node_was_text = false;
+    this.last_tag = null;
+
     return raw;
 };
 
@@ -9632,6 +9823,7 @@ WYMeditor.XhtmlSaxListener.prototype.afterParsing = function(xhtml) {
     xhtml = this.joinRepeatedEntities(xhtml);
     xhtml = this.removeEmptyTags(xhtml);
     xhtml = this.removeBrInPre(xhtml);
+
     return xhtml;
 };
 
@@ -9687,6 +9879,10 @@ WYMeditor.XhtmlSaxListener.prototype.addContent = function(text) {
         text = text.replace(/\n/, '');
         text = text.replace(/\r/, '');
     }
+    if (text.length > 0) {
+        // Don't count it as text if it's empty
+        this._last_node_was_text = true;
+    }
     this.output += text;
 };
 
@@ -9709,6 +9905,7 @@ WYMeditor.XhtmlSaxListener.prototype.addCss = function(text) {
 };
 
 WYMeditor.XhtmlSaxListener.prototype.openBlockTag = function(tag, attributes) {
+    this._last_node_was_text = false;
     this.output += this.helper.tag(
         tag,
         this.validator.getValidTagAttributes(tag, attributes),
@@ -9716,6 +9913,7 @@ WYMeditor.XhtmlSaxListener.prototype.openBlockTag = function(tag, attributes) {
 };
 
 WYMeditor.XhtmlSaxListener.prototype.inlineTag = function(tag, attributes) {
+    this._last_node_was_text = false;
     this.output += this.helper.tag(
         tag,
         this.validator.getValidTagAttributes(tag, attributes));
@@ -9726,6 +9924,7 @@ WYMeditor.XhtmlSaxListener.prototype.openUnknownTag = function(tag, attributes) 
 };
 
 WYMeditor.XhtmlSaxListener.prototype.closeBlockTag = function(tag) {
+    this._last_node_was_text = false;
     this.output = this.output.replace(/<br \/>$/, '') +
         this._getClosingTagContent('before', tag) +
         "</"+tag+">" +
@@ -9737,6 +9936,7 @@ WYMeditor.XhtmlSaxListener.prototype.closeUnknownTag = function(tag) {
 };
 
 WYMeditor.XhtmlSaxListener.prototype.closeUnopenedTag = function(tag) {
+    this._last_node_was_text = false;
     this.output += "</" + tag + ">";
 };
 
@@ -9773,11 +9973,12 @@ WYMeditor.XhtmlSaxListener.prototype.insertContentBeforeClosingTag = function(ta
 };
 
 WYMeditor.XhtmlSaxListener.prototype.fixNestingBeforeOpeningBlockTag = function(tag, attributes) {
-    if ((tag == 'ul' || tag == 'ol') && this.last_tag &&
+    if (!this._last_node_was_text && (tag == 'ul' || tag == 'ol') && this.last_tag &&
             !this.last_tag_opened && this.last_tag == 'li') {
         // We have a <li></li><ol>... situation. The new list should be a
         // child of the li tag. Not a sibling.
 
+        // Remove the last closing li tag
         this.output = this.output.replace(/<\/li>\s*$/, '');
         this.insertContentAfterClosingTag(tag, '</li>');
     } else if ((tag == 'ul' || tag == 'ol') && this.last_tag &&
@@ -9786,6 +9987,7 @@ WYMeditor.XhtmlSaxListener.prototype.fixNestingBeforeOpeningBlockTag = function(
         // a li tag parent and shouldn't be directly nested.
 
         // Add an opening li tag before and after this tag
+        this._last_node_was_text = false;
         this.output += this.helper.tag('li', {}, true);
         this.insertContentAfterClosingTag(tag, '</li>');
     } else if (tag == 'li' && !this.last_tag_opened) {
@@ -9794,11 +9996,12 @@ WYMeditor.XhtmlSaxListener.prototype.fixNestingBeforeOpeningBlockTag = function(
             var closestOpenTag = this._tag_stack[this._tag_stack.length - 2];
             if (closestOpenTag == 'li'){
                 // Pop the tag off of the stack to indicate we closed it
-                this._open_tags['li']--;
-                if (this._open_tags['li'] === 0) {
-                    this._open_tags['li'] = undefined;
+                this._open_tags.li -= 1;
+                if (this._open_tags.li === 0) {
+                    this._open_tags.li = undefined;
                 }
                 this._tag_stack.pop(this._tag_stack.length - 2);
+                this._last_node_was_text = false;
                 this.output += '</li>';
             }
         }
